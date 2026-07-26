@@ -26,17 +26,26 @@ Each algorithm is a plain Python function — `is_allowed(redis_client, key, ...
 
 ## Stack
 
-Python · FastAPI · Redis · pytest · Docker (for Redis)
+Python · FastAPI · Redis · pytest · Locust · Docker
 
 ## Quickstart
+
+Everything in Docker:
+
+```bash
+docker compose up -d --build       # builds the app image, starts Redis + the app together
+curl http://localhost:8000/health
+```
+
+Or run the app directly on the host (needed for `--reload` / running tests), with just Redis in Docker:
 
 ```bash
 python -m venv venv
 source venv/Scripts/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
-docker compose up -d               # starts Redis on localhost:6379
-python -m pytest tests/ -v         # run the test suite
+docker compose up -d redis
+python -m pytest tests/ -v
 uvicorn rate_limiter.main:app --reload --port 8000
 ```
 
@@ -50,6 +59,6 @@ Or open `http://localhost:8000/docs` for the interactive Swagger UI.
 
 ## Status
 
-Algorithms and API are built and tested. Load testing and Docker packaging are in progress.
+Complete: all three algorithms, the API, a Locust load test proving admitted requests never exceed the configured limit under concurrent load, and the service runs fully in Docker.
 
-For full setup details, the API reference, project layout, and a running log of design decisions and bugs found along the way, see [docs/DEVLOG.md](docs/DEVLOG.md).
+For full setup details, the API reference, project layout, the full algorithm comparison and architecture breakdown, and a running log of design decisions and bugs found along the way, see [docs/DEVLOG.md](docs/DEVLOG.md).

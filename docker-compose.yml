@@ -4,3 +4,17 @@ services:
     container_name: rate_limiter_redis
     ports:
       - "6379:6379"
+
+  app:
+    build: .
+    container_name: rate_limiter_app
+    ports:
+      - "8000:8000"
+    environment:
+      # "redis" resolves via Compose's built-in DNS to the redis service
+      # above -- containers on the same Compose network can reach each
+      # other by service name, unlike "localhost" which would point back
+      # at the app container itself.
+      REDIS_HOST: redis
+    depends_on:
+      - redis
