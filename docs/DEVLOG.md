@@ -250,6 +250,22 @@ curl http://localhost:8000/health
 Checks whether `client_id` is allowed one more request under `algo`.
 Returns `200` (allowed) or `429` (blocked).
 
+Every response carries standard rate-limit headers so a real gateway/backend
+can act on the decision without re-deriving it:
+
+| Header | Meaning |
+|---|---|
+| `X-RateLimit-Limit` | The effective `limit` (fixed_window/sliding_window_log) or `capacity` (token_bucket) used for this check |
+| `X-RateLimit-Remaining` | Requests (or tokens) left in the current window/bucket |
+| `X-RateLimit-Reset` | Seconds until quota next changes in the caller's favor -- window rollover for Fixed Window, the oldest entry aging out for Sliding Window Log, or the next token becoming available for Token Bucket. Always an integer, rounded up (`math.ceil`) so callers never retry a moment early |
+| `Retry-After` | Same value as `X-RateLimit-Reset`, only present on `429` responses -- this is the standard HTTP header (RFC 7231) most HTTP clients/gateways already know how to honor |
+
+Each algorithm's `is_allowed()` now returns a 3-tuple --
+`(allowed, count_or_tokens, reset_seconds)` -- instead of 2, so `main.py`
+never has to recompute timing separately from the atomic Redis operation
+that made the decision (which would risk a slightly different `now` than
+the one actually used inside the Lua script/`INCR`).
+
 | Param | Applies to | Default | Meaning |
 |---|---|---|---|
 | `client_id` | all | *(required)* | Identifies the caller being rate-limited |
@@ -346,9 +362,10 @@ All 8 stages complete.
   always used `int`), broke once the API passed floats from query params.
   Fixed with `math.ceil()`. A good example of a bug that only surfaces at
   integration time, not unit-test time.
-- No input validation yet on `limit`/`capacity`/`refill_rate` being positive
-  (e.g. `limit=-5` isn't rejected). Not a correctness bug in what's been
-  tested, but a known gap.
+- `limit`, `window_seconds`, `capacity`, and `refill_rate` are now validated
+  as strictly positive via FastAPI `Query(gt=0)` constraints, so e.g.
+  `limit=-5` or `window_seconds=0` gets a `422` instead of reaching the
+  algorithm layer. Covered by `tests/test_api.py`.
 - Token Bucket's Redis key TTL (`capacity / refill_rate + 1` seconds) is a
   cleanup heuristic, not a strict correctness guarantee.
 - The Dockerized `app` service has no `--reload` and isn't meant for active

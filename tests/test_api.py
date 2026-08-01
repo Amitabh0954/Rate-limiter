@@ -107,3 +107,65 @@ def test_invalid_algo_is_rejected_with_422():
 def test_missing_client_id_is_rejected_with_422():
     response = client.post("/check", params={"algo": "token_bucket"})
     assert response.status_code == 422
+
+
+def test_non_positive_limit_is_rejected_with_422():
+    response = client.post(
+        "/check",
+        params={"client_id": "clientG", "algo": "fixed_window", "limit": -5, "window_seconds": 10},
+    )
+    assert response.status_code == 422
+
+
+def test_zero_window_seconds_is_rejected_with_422():
+    response = client.post(
+        "/check",
+        params={"client_id": "clientG", "algo": "fixed_window", "limit": 5, "window_seconds": 0},
+    )
+    assert response.status_code == 422
+
+
+def test_non_positive_capacity_is_rejected_with_422():
+    response = client.post(
+        "/check",
+        params={"client_id": "clientG", "algo": "token_bucket", "capacity": -1, "refill_rate": 0.5},
+    )
+    assert response.status_code == 422
+
+
+def test_rate_limit_headers_present_on_allowed_response(r):
+    response = client.post(
+        "/check",
+        params={"client_id": "clientH", "algo": "fixed_window", "limit": 5, "window_seconds": 10},
+    )
+    assert response.status_code == 200
+    assert response.headers["x-ratelimit-limit"] == "5"
+    assert response.headers["x-ratelimit-remaining"] == "4"
+    assert int(response.headers["x-ratelimit-reset"]) <= 10
+    assert "retry-after" not in response.headers
+
+
+def test_retry_after_header_present_on_blocked_response(r):
+    for _ in range(5):
+        client.post(
+            "/check",
+            params={"client_id": "clientI", "algo": "fixed_window", "limit": 5, "window_seconds": 10},
+        )
+
+    response = client.post(
+        "/check",
+        params={"client_id": "clientI", "algo": "fixed_window", "limit": 5, "window_seconds": 10},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["x-ratelimit-remaining"] == "0"
+    assert "retry-after" in response.headers
+    assert response.headers["retry-after"] == response.headers["x-ratelimit-reset"]
+
+
+def test_non_positive_refill_rate_is_rejected_with_422():
+    response = client.post(
+        "/check",
+        params={"client_id": "clientG", "algo": "token_bucket", "capacity": 5, "refill_rate": 0},
+    )
+    assert response.status_code == 422

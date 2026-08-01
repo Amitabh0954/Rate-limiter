@@ -5,7 +5,7 @@ from tests.conftest import make_clock
 def test_allows_requests_under_limit(r):
     now, _ = make_clock(0)
     for i in range(5):
-        allowed, count = is_allowed(r, "clientA", limit=5, window_seconds=60, now_fn=now)
+        allowed, count, _ = is_allowed(r, "clientA", limit=5, window_seconds=60, now_fn=now)
         assert allowed is True
         assert count == i + 1
 
@@ -15,7 +15,7 @@ def test_blocks_requests_once_limit_exceeded(r):
     for _ in range(5):
         is_allowed(r, "clientB", limit=5, window_seconds=60, now_fn=now)
 
-    allowed, count = is_allowed(r, "clientB", limit=5, window_seconds=60, now_fn=now)
+    allowed, count, _ = is_allowed(r, "clientB", limit=5, window_seconds=60, now_fn=now)
 
     assert allowed is False
     assert count == 6
@@ -27,7 +27,7 @@ def test_clients_have_independent_counters(r):
         is_allowed(r, "clientC", limit=5, window_seconds=60, now_fn=now)
 
     # A different client should be unaffected by clientC's usage.
-    allowed, count = is_allowed(r, "clientD", limit=5, window_seconds=60, now_fn=now)
+    allowed, count, _ = is_allowed(r, "clientD", limit=5, window_seconds=60, now_fn=now)
 
     assert allowed is True
     assert count == 1
@@ -38,11 +38,11 @@ def test_counter_resets_when_window_rolls_over(r):
     for _ in range(3):
         is_allowed(r, "clientE", limit=3, window_seconds=60, now_fn=now)
 
-    allowed, _ = is_allowed(r, "clientE", limit=3, window_seconds=60, now_fn=now)
+    allowed, _, _ = is_allowed(r, "clientE", limit=3, window_seconds=60, now_fn=now)
     assert allowed is False  # 4th request in the same window is blocked
 
     advance(60)  # jump into the next window
-    allowed, count = is_allowed(r, "clientE", limit=3, window_seconds=60, now_fn=now)
+    allowed, count, _ = is_allowed(r, "clientE", limit=3, window_seconds=60, now_fn=now)
 
     assert allowed is True
     assert count == 1  # counter started fresh in the new window
@@ -62,12 +62,22 @@ def test_boundary_burst_is_allowed_by_design(r):
     advance(1)  # now at t=60, a new window
     allowed_count = 0
     for _ in range(5):
-        allowed, _ = is_allowed(r, "clientF", limit=5, window_seconds=60, now_fn=now)
+        allowed, _, _ = is_allowed(r, "clientF", limit=5, window_seconds=60, now_fn=now)
         if allowed:
             allowed_count += 1
 
     # 10 requests allowed within a 2-second span, despite a limit of 5/min.
     assert allowed_count == 5
+
+
+def test_reset_seconds_counts_down_to_window_boundary(r):
+    now, advance = make_clock(10)  # 10s into a 60s window
+    _, _, reset = is_allowed(r, "clientH", limit=5, window_seconds=60, now_fn=now)
+    assert reset == 50  # 60 - 10
+
+    advance(20)
+    _, _, reset = is_allowed(r, "clientH", limit=5, window_seconds=60, now_fn=now)
+    assert reset == 30  # 60 - 30
 
 
 def test_ttl_is_set_so_old_windows_are_cleaned_up(r):

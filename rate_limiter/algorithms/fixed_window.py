@@ -11,16 +11,17 @@ def is_allowed(
     limit: int,
     window_seconds: int,
     now_fn: Callable[[], float] = time.time,
-) -> Tuple[bool, int]:
+) -> Tuple[bool, int, float]:
     """Fixed Window Counter rate limiter backed by Redis.
 
-    Returns (allowed, current_count) so callers can report remaining quota
-    (e.g. in a X-RateLimit-Remaining header later).
+    Returns (allowed, current_count, reset_seconds) so callers can report
+    remaining quota and reset time (e.g. X-RateLimit-Remaining/-Reset headers).
     """
     # Bucket id changes every `window_seconds`, so encoding it into the key
     # gives each window its own counter "for free" -- no manual reset logic,
     # old windows just become unreferenced keys that expire on their own.
-    window_id = int(now_fn() // window_seconds)
+    now = now_fn()
+    window_id = int(now // window_seconds)
     redis_key = f"ratelimit:fixed:{key}:{window_id}"
 
     # INCR is atomic on the Redis server, so concurrent requests from the
@@ -38,4 +39,5 @@ def is_allowed(
         client.expire(redis_key, math.ceil(window_seconds))
 
     allowed = count <= limit
-    return allowed, count
+    reset_seconds = (window_id + 1) * window_seconds - now
+    return allowed, count, reset_seconds

@@ -45,9 +45,16 @@ redis.call('HMSET', key, 'tokens', tokens, 'last_refill', now)
 local ttl = math.ceil(capacity / refill_rate) + 1
 redis.call('EXPIRE', key, ttl)
 
+-- Seconds until at least one more token is available.
+local reset = 0
+if tokens < 1 then
+    reset = (1 - tokens) / refill_rate
+end
+
 -- Redis truncates Lua numbers to integers when returning them over RESP,
--- so tokens (a float) must be sent back as a string to preserve precision.
-return {allowed, tostring(tokens)}
+-- so floats (tokens, reset) must be sent back as strings to preserve
+-- precision.
+return {allowed, tostring(tokens), tostring(reset)}
 """
 
 
@@ -57,18 +64,19 @@ def is_allowed(
     capacity: float,
     refill_rate: float,
     now_fn: Callable[[], float] = time.time,
-) -> Tuple[bool, float]:
+) -> Tuple[bool, float, float]:
     """Token Bucket rate limiter backed by a Redis hash.
 
     capacity: max tokens the bucket can hold (i.e. max burst size).
     refill_rate: tokens added per second (i.e. sustained allowed rate).
 
-    Returns (allowed, tokens_remaining).
+    Returns (allowed, tokens_remaining, reset_seconds) -- reset_seconds is
+    how long until at least one more token is available.
     """
     now = now_fn()
     redis_key = f"ratelimit:tokenbucket:{key}"
 
-    allowed, tokens_remaining = client.eval(
+    allowed, tokens_remaining, reset_seconds = client.eval(
         _TOKEN_BUCKET_SCRIPT, 1, redis_key, now, capacity, refill_rate
     )
-    return bool(int(allowed)), float(tokens_remaining)
+    return bool(int(allowed)), float(tokens_remaining), float(reset_seconds)

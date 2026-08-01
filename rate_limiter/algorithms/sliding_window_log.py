@@ -20,14 +20,22 @@ local member = ARGV[4]
 redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
 local count = redis.call('ZCARD', key)
 
+-- Seconds until the oldest surviving entry ages out of the window, i.e.
+-- the earliest a slot frees up. 0 if the log is currently empty.
+local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+local reset = 0
+if #oldest > 0 then
+    reset = tonumber(oldest[2]) + window - now
+end
+
 if count < limit then
     redis.call('ZADD', key, now, member)
     -- Safety-net TTL: if this client goes silent, the whole log should
     -- eventually vanish rather than sit in Redis forever.
     redis.call('EXPIRE', key, math.ceil(window))
-    return {1, count + 1}
+    return {1, count + 1, tostring(reset)}
 else
-    return {0, count}
+    return {0, count, tostring(reset)}
 end
 """
 
@@ -38,10 +46,11 @@ def is_allowed(
     limit: int,
     window_seconds: float,
     now_fn: Callable[[], float] = time.time,
-) -> Tuple[bool, int]:
+) -> Tuple[bool, int, float]:
     """Sliding Window Log rate limiter backed by a Redis sorted set.
 
-    Returns (allowed, current_count).
+    Returns (allowed, current_count, reset_seconds) -- reset_seconds is how
+    long until the oldest entry currently in the window ages out.
     """
     now = now_fn()
     redis_key = f"ratelimit:slidinglog:{key}"
@@ -52,7 +61,7 @@ def is_allowed(
     # would silently overwrite the other, undercounting.
     member = f"{now}:{uuid.uuid4()}"
 
-    allowed, count = client.eval(
+    allowed, count, reset_seconds = client.eval(
         _SLIDING_LOG_SCRIPT, 1, redis_key, now, window_seconds, limit, member
     )
-    return bool(allowed), int(count)
+    return bool(allowed), int(count), float(reset_seconds)
